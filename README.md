@@ -214,7 +214,18 @@ Make it executable and reference it in config:
 ### Running Tests
 
 ```bash
+# Quick test run
 go test ./...
+
+# Run a specific test function
+go test -v -run TestLoadConfig
+
+# Coverage summary
+go test -cover ./...
+
+# Visual HTML coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
 ```
 
 ### Building Locally
