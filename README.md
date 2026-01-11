@@ -70,15 +70,23 @@ Create a `config.json` file with your repositories:
 - **interval**: Polling interval (e.g., "30s", "1m", "5m")
 - **command**: Shell command to execute when new commits are detected (supports pipes, redirects, quotes, etc.)
 - **workdir**: Directory where repositories will be cloned
+- **timeout** (optional): Maximum duration for command execution (e.g., "5m", "30s"). If not specified, commands run without timeout. Commands exceeding the timeout are killed with SIGKILL.
 
 ## Usage
 
 ```bash
+# Check version
+./ngenteni --version
+./ngenteni -v
+
 # Use default config.json
 ./ngenteni
 
 # Use custom config file
 ./ngenteni /path/to/config.json
+
+# Stop gracefully
+# Press Ctrl+C - watchers will stop cleanly after completing current operations
 ```
 
 ## Environment Variables

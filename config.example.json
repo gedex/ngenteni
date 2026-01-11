@@ -14,7 +14,8 @@
       "branch": "develop",
       "interval": "1m",
       "command": "/path/to/deploy.sh",
-      "workdir": "./repos"
+      "workdir": "./repos",
+      "timeout": "5m"
     }
   ]
 }
