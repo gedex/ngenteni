@@ -2,7 +2,7 @@
 
 A simple Git repository watcher that monitors remote repositories for new commits and executes commands when changes are detected.
 
-**Ngenteni** (Indonesian: "waiting") - A lightweight tool that watches your Git repositories.
+**Ngenteni** (Javanese: "waiting") - A lightweight tool that watches your Git repositories.
 
 ## Features
 
