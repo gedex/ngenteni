@@ -190,10 +190,13 @@ Make it executable and reference it in config:
 ## How It Works
 
 1. **Initialization**: Clones repositories if they don't exist locally
-2. **Monitoring**: Periodically runs `git fetch` to check for new commits
-3. **Detection**: Compares current commit SHA with the last known commit
-4. **Execution**: Runs the configured command when new commits are detected
-5. **Repeat**: Continues monitoring at the specified interval
+2. **Monitoring**: Periodically runs `git fetch` to check for new commits on the remote branch
+3. **Detection**: Compares remote branch commit SHA with the last known commit
+4. **Synchronization**: Updates local working directory to match remote when new commits are detected
+5. **Execution**: Runs the configured command with the latest files from the repository
+6. **Repeat**: Continues monitoring at the specified interval
+
+**Note**: When new commits are detected, ngenteni automatically syncs the local working directory (using `git reset --hard origin/<branch>`) before running your command. This ensures your command always works with the latest files.
 
 ## Requirements
 

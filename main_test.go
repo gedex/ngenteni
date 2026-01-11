@@ -522,3 +522,107 @@ func TestCheck_ContextCancellation(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
+
+// Test that working directory is updated when new commits are detected
+func TestUpdateWorkingDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a test git repository
+	testRepoDir := filepath.Join(dir, "test-repo")
+	if err := os.MkdirAll(testRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	// Configure git
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+
+	// Create initial file and commit
+	testFile := filepath.Join(testRepoDir, "version.txt")
+	if err := os.WriteFile(testFile, []byte("version 1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "version.txt")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git commit failed: %v", err)
+	}
+
+	// Clone to another location
+	cloneDir := filepath.Join(dir, "clone")
+	cmd = exec.Command("git", "clone", testRepoDir, cloneDir)
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git clone failed: %v", err)
+	}
+
+	// Verify cloned file content
+	clonedFile := filepath.Join(cloneDir, "version.txt")
+	content, err := os.ReadFile(clonedFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "version 1" {
+		t.Errorf("expected 'version 1', got '%s'", content)
+	}
+
+	// Create second commit in original repo
+	if err := os.WriteFile(testFile, []byte("version 2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "version.txt")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "second commit")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fetch in clone (but don't update working directory yet)
+	cmd = exec.Command("git", "fetch", "origin")
+	cmd.Dir = cloneDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// File should still be "version 1" (not updated)
+	content, _ = os.ReadFile(clonedFile)
+	if string(content) != "version 1" {
+		t.Errorf("expected file to still be 'version 1' after fetch, got '%s'", content)
+	}
+
+	// Now use updateWorkingDir to sync files
+	w := &RepoWatcher{
+		config: RepoConfig{
+			Branch: "main",
+		},
+		repoPath: cloneDir,
+	}
+
+	if err := w.updateWorkingDir(context.Background()); err != nil {
+		t.Fatalf("updateWorkingDir failed: %v", err)
+	}
+
+	// File should now be "version 2" (updated!)
+	content, err = os.ReadFile(clonedFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "version 2" {
+		t.Errorf("expected file to be 'version 2' after updateWorkingDir, got '%s'", content)
+	}
+}

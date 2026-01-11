@@ -212,6 +212,16 @@ func (w *RepoWatcher) getCurrentCommit(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+func (w *RepoWatcher) updateWorkingDir(ctx context.Context) error {
+	// Reset local branch to match remote branch
+	cmd := exec.CommandContext(ctx, "git", "reset", "--hard", fmt.Sprintf("origin/%s", w.config.Branch))
+	cmd.Dir = w.repoPath
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git reset failed: %w", err)
+	}
+	return nil
+}
+
 func (w *RepoWatcher) Watch(ctx context.Context) {
 	log.Printf("[%s] Watching every %s", w.config.Name, w.interval)
 
@@ -244,7 +254,7 @@ func (w *RepoWatcher) check(ctx context.Context) error {
 		return fmt.Errorf("fetching: %w", err)
 	}
 
-	// Get current commit
+	// Get current commit from remote
 	commit, err := w.getCurrentCommit(ctx)
 	if err != nil {
 		return fmt.Errorf("getting commit: %w", err)
@@ -253,6 +263,11 @@ func (w *RepoWatcher) check(ctx context.Context) error {
 	// Check if changed
 	if commit != w.lastCommit {
 		log.Printf("[%s] New commit detected: %s -> %s", w.config.Name, w.lastCommit[:8], commit[:8])
+
+		// Update working directory to match remote
+		if err := w.updateWorkingDir(ctx); err != nil {
+			return fmt.Errorf("updating working directory: %w", err)
+		}
 
 		// Run command
 		if err := w.runCommand(commit); err != nil {
