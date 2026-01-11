@@ -1,0 +1,20 @@
+{
+  "repos": [
+    {
+      "name": "my-project",
+      "url": "https://github.com/username/my-project.git",
+      "branch": "main",
+      "interval": "30s",
+      "command": "echo 'New commit detected in' $REPO_NAME '- commit:' $NEW_COMMIT",
+      "workdir": "./repos"
+    },
+    {
+      "name": "another-project",
+      "url": "https://github.com/username/another-project.git",
+      "branch": "develop",
+      "interval": "1m",
+      "command": "/path/to/deploy.sh",
+      "workdir": "./repos"
+    }
+  ]
+}
