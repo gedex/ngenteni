@@ -19,11 +19,13 @@ Releases are automatically created via GitHub Actions when you push a new tag.
 3. Create and push a new tag:
 
 ```bash
-# Create an annotated tag
+# Create an annotated tag (with or without 'v' prefix)
 git tag -a v0.1.0 -m "Release v0.1.0: Initial release"
+# OR
+git tag -a 0.1.0 -m "Release 0.1.0: Initial release"
 
 # Push the tag
-git push origin v0.1.0
+git push origin v0.1.0  # or: git push origin 0.1.0
 ```
 
 4. GitHub Actions will automatically:
@@ -54,23 +56,27 @@ This creates release artifacts in the `dist/` directory for inspection.
 # Set your GitHub token
 export GITHUB_TOKEN="your_github_token_here"
 
-# Create a tag locally
+# Create a tag locally (with or without 'v' prefix)
 git tag -a v0.1.0 -m "Release v0.1.0"
+# OR
+git tag -a 0.1.0 -m "Release 0.1.0"
 
 # Run goreleaser
 goreleaser --rm-dist
 
 # Push the tag
-git push origin v0.1.0
+git push origin v0.1.0  # or: git push origin 0.1.0
 ```
 
 ## Versioning
 
 Follow [Semantic Versioning](https://semver.org/):
 
-- **Major** (v1.0.0): Breaking changes
-- **Minor** (v0.1.0): New features, backward compatible
-- **Patch** (v0.0.1): Bug fixes, backward compatible
+- **Major** (v1.0.0 or 1.0.0): Breaking changes
+- **Minor** (v0.1.0 or 0.1.0): New features, backward compatible
+- **Patch** (v0.0.1 or 0.0.1): Bug fixes, backward compatible
+
+Tags can be created with or without the 'v' prefix - both formats are supported.
 
 ## Release Checklist
 
@@ -109,7 +115,7 @@ Common issues:
 Common issues:
 - Missing GITHUB_TOKEN: Set the environment variable
 - Git state not clean: Commit or stash changes
-- Tag already exists: Delete the tag first: `git tag -d v0.1.0`
+- Tag already exists: Delete the tag first: `git tag -d v0.1.0` or `git tag -d 0.1.0`
 
 ## Post-Release
 
