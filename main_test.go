@@ -78,7 +78,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name:       "empty repos",
 			configJSON: `{"repos": []}`,
-			wantErr:    false,
+			wantErr:    true, // Now validates that repos is not empty
 			wantRepos:  0,
 		},
 		{
@@ -520,6 +520,277 @@ func TestCheck_ContextCancellation(t *testing.T) {
 	}
 	if err != context.Canceled {
 		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+// Test config validation
+func TestValidateConfig_EmptyRepos(t *testing.T) {
+	config := &Config{
+		Repos: []RepoConfig{},
+	}
+
+	err := validateConfig(config)
+	if err == nil {
+		t.Error("expected error for empty repos, got nil")
+	}
+	if !strings.Contains(err.Error(), "no repositories configured") {
+		t.Errorf("expected 'no repositories configured' error, got: %v", err)
+	}
+}
+
+func TestValidateRepoConfig_MissingFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		repo        RepoConfig
+		errContains string
+	}{
+		{
+			name:        "missing name",
+			repo:        RepoConfig{URL: "url", Branch: "main", Interval: "30s", Command: "cmd", WorkDir: "./"},
+			errContains: "name is required",
+		},
+		{
+			name:        "missing url",
+			repo:        RepoConfig{Name: "test", Branch: "main", Interval: "30s", Command: "cmd", WorkDir: "./"},
+			errContains: "url is required",
+		},
+		{
+			name:        "missing branch",
+			repo:        RepoConfig{Name: "test", URL: "url", Interval: "30s", Command: "cmd", WorkDir: "./"},
+			errContains: "branch is required",
+		},
+		{
+			name:        "missing interval",
+			repo:        RepoConfig{Name: "test", URL: "url", Branch: "main", Command: "cmd", WorkDir: "./"},
+			errContains: "interval is required",
+		},
+		{
+			name:        "missing command",
+			repo:        RepoConfig{Name: "test", URL: "url", Branch: "main", Interval: "30s", WorkDir: "./"},
+			errContains: "command is required",
+		},
+		{
+			name:        "missing workdir",
+			repo:        RepoConfig{Name: "test", URL: "url", Branch: "main", Interval: "30s", Command: "cmd"},
+			errContains: "workdir is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRepoConfig(&tt.repo, 0)
+			if err == nil {
+				t.Errorf("expected error, got nil")
+				return
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("expected error containing '%s', got: %v", tt.errContains, err)
+			}
+		})
+	}
+}
+
+func TestValidateRepoConfig_InvalidInterval(t *testing.T) {
+	tests := []struct {
+		name        string
+		interval    string
+		errContains string
+	}{
+		{
+			name:        "invalid format",
+			interval:    "invalid",
+			errContains: "invalid interval",
+		},
+		{
+			name:        "negative interval",
+			interval:    "-30s",
+			errContains: "interval must be positive",
+		},
+		{
+			name:        "zero interval",
+			interval:    "0s",
+			errContains: "interval must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := RepoConfig{
+				Name:     "test",
+				URL:      "url",
+				Branch:   "main",
+				Interval: tt.interval,
+				Command:  "cmd",
+				WorkDir:  "./",
+			}
+
+			err := validateRepoConfig(&repo, 0)
+			if err == nil {
+				t.Errorf("expected error, got nil")
+				return
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("expected error containing '%s', got: %v", tt.errContains, err)
+			}
+		})
+	}
+}
+
+func TestValidateRepoConfig_InvalidTimeout(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     string
+		errContains string
+	}{
+		{
+			name:        "invalid format",
+			timeout:     "invalid",
+			errContains: "invalid timeout",
+		},
+		{
+			name:        "negative timeout",
+			timeout:     "-5m",
+			errContains: "timeout must be positive",
+		},
+		{
+			name:        "zero timeout",
+			timeout:     "0s",
+			errContains: "timeout must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := RepoConfig{
+				Name:     "test",
+				URL:      "url",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "cmd",
+				WorkDir:  "./",
+				Timeout:  tt.timeout,
+			}
+
+			err := validateRepoConfig(&repo, 0)
+			if err == nil {
+				t.Errorf("expected error, got nil")
+				return
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("expected error containing '%s', got: %v", tt.errContains, err)
+			}
+		})
+	}
+}
+
+func TestValidateRepoConfig_Valid(t *testing.T) {
+	tests := []struct {
+		name string
+		repo RepoConfig
+	}{
+		{
+			name: "valid config without timeout",
+			repo: RepoConfig{
+				Name:     "test",
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+			},
+		},
+		{
+			name: "valid config with timeout",
+			repo: RepoConfig{
+				Name:     "test",
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "1m",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+				Timeout:  "5m",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRepoConfig(&tt.repo, 0)
+			if err != nil {
+				t.Errorf("unexpected error for valid config: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		configJSON  string
+		errContains string
+	}{
+		{
+			name:        "empty repos array",
+			configJSON:  `{"repos": []}`,
+			errContains: "no repositories configured",
+		},
+		{
+			name: "missing name",
+			configJSON: `{
+				"repos": [{
+					"url": "https://github.com/test/repo.git",
+					"branch": "main",
+					"interval": "30s",
+					"command": "echo test",
+					"workdir": "./"
+				}]
+			}`,
+			errContains: "name is required",
+		},
+		{
+			name: "invalid interval",
+			configJSON: `{
+				"repos": [{
+					"name": "test",
+					"url": "https://github.com/test/repo.git",
+					"branch": "main",
+					"interval": "invalid",
+					"command": "echo test",
+					"workdir": "./"
+				}]
+			}`,
+			errContains: "invalid interval",
+		},
+		{
+			name: "negative timeout",
+			configJSON: `{
+				"repos": [{
+					"name": "test",
+					"url": "https://github.com/test/repo.git",
+					"branch": "main",
+					"interval": "30s",
+					"command": "echo test",
+					"workdir": "./",
+					"timeout": "-5m"
+				}]
+			}`,
+			errContains: "timeout must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := createTestConfig(t, tt.configJSON)
+			_, err := loadConfig(path)
+
+			if err == nil {
+				t.Error("expected validation error, got nil")
+				return
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("expected error containing '%s', got: %v", tt.errContains, err)
+			}
+		})
 	}
 }
 

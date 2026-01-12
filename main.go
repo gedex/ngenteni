@@ -120,7 +120,78 @@ func loadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	// Validate all repo configurations
+	if err := validateConfig(&config); err != nil {
+		return nil, err
+	}
+
 	return &config, nil
+}
+
+func validateConfig(config *Config) error {
+	if len(config.Repos) == 0 {
+		return fmt.Errorf("no repositories configured")
+	}
+
+	for i, repo := range config.Repos {
+		if err := validateRepoConfig(&repo, i); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateRepoConfig(repo *RepoConfig, index int) error {
+	// Helper to create error messages with repo context
+	errPrefix := func() string {
+		if repo.Name != "" {
+			return fmt.Sprintf("repo '%s'", repo.Name)
+		}
+		return fmt.Sprintf("repo at index %d", index)
+	}
+
+	// Validate required fields
+	if repo.Name == "" {
+		return fmt.Errorf("%s: name is required", errPrefix())
+	}
+	if repo.URL == "" {
+		return fmt.Errorf("%s: url is required", errPrefix())
+	}
+	if repo.Branch == "" {
+		return fmt.Errorf("%s: branch is required", errPrefix())
+	}
+	if repo.Interval == "" {
+		return fmt.Errorf("%s: interval is required", errPrefix())
+	}
+	if repo.Command == "" {
+		return fmt.Errorf("%s: command is required", errPrefix())
+	}
+	if repo.WorkDir == "" {
+		return fmt.Errorf("%s: workdir is required", errPrefix())
+	}
+
+	// Validate interval format
+	interval, err := time.ParseDuration(repo.Interval)
+	if err != nil {
+		return fmt.Errorf("%s: invalid interval '%s': %w", errPrefix(), repo.Interval, err)
+	}
+	if interval <= 0 {
+		return fmt.Errorf("%s: interval must be positive, got %s", errPrefix(), repo.Interval)
+	}
+
+	// Validate timeout format (if provided)
+	if repo.Timeout != "" {
+		timeout, err := time.ParseDuration(repo.Timeout)
+		if err != nil {
+			return fmt.Errorf("%s: invalid timeout '%s': %w", errPrefix(), repo.Timeout, err)
+		}
+		if timeout <= 0 {
+			return fmt.Errorf("%s: timeout must be positive, got %s", errPrefix(), repo.Timeout)
+		}
+	}
+
+	return nil
 }
 
 func NewRepoWatcher(config RepoConfig) (*RepoWatcher, error) {

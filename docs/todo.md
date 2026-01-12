@@ -23,18 +23,9 @@ This document tracks potential improvements for ngenteni, prioritized by value a
   Handle SIGTERM/SIGINT, stop tickers, wait for in-flight commands
   ```
 
-### 3. Config validation
-- **Why**: Invalid configs fail at runtime, not startup
-- **Effort**: Low
-- **Value**: High (fail fast)
-- **Implementation**:
-  ```go
-  Validate required fields, check git repo accessibility, test intervals
-  ```
-
 ## Medium Priority (Quality of Life)
 
-### 4. `--dry-run` mode
+### 3. `--dry-run` mode
 - **Why**: Test config without executing commands
 - **Effort**: Low
 - **Value**: Medium
@@ -43,7 +34,7 @@ This document tracks potential improvements for ngenteni, prioritized by value a
   ngenteni --dry-run config.json
   ```
 
-### 5. Structured logging with levels
+### 4. Structured logging with levels
 - **Why**: Too verbose in production, not enough detail when debugging
 - **Effort**: Medium
 - **Value**: Medium
@@ -52,7 +43,7 @@ This document tracks potential improvements for ngenteni, prioritized by value a
   {"log_level": "info"}  // debug, info, warn, error
   ```
 
-### 6. Pass commit metadata to commands
+### 5. Pass commit metadata to commands
 - **Why**: Only SHA is available, not message/author/files
 - **Effort**: Medium
 - **Value**: Medium
@@ -61,7 +52,7 @@ This document tracks potential improvements for ngenteni, prioritized by value a
   COMMIT_MESSAGE, COMMIT_AUTHOR, COMMIT_FILES env vars
   ```
 
-### 7. Stats/metrics tracking
+### 6. Stats/metrics tracking
 - **Why**: No visibility into watcher activity
 - **Effort**: Low
 - **Value**: Medium
@@ -70,7 +61,7 @@ This document tracks potential improvements for ngenteni, prioritized by value a
   Log: "Checked 150 times, detected 3 changes, 2 command successes, 1 failure"
   ```
 
-### 8. Retry logic for failed commands
+### 7. Retry logic for failed commands
 - **Why**: Transient failures cause missed deployments
 - **Effort**: Medium
 - **Value**: Medium
@@ -81,18 +72,18 @@ This document tracks potential improvements for ngenteni, prioritized by value a
 
 ## Low Priority (Nice to Have)
 
-### 9. Config file watching
+### 8. Config file watching
 - **Why**: Must restart to update config
 - **Effort**: Medium
 - **Value**: Low (restart is acceptable)
 
-### 10. Multiple branches per repo
+### 9. Multiple branches per repo
 - **Why**: Limited to one branch per repo
 - **Effort**: Medium
 - **Value**: Low (can add multiple repos with same URL)
 - **Note**: Current workaround is to add multiple repo entries with the same URL
 
-### 11. Initial run option
+### 10. Initial run option
 - **Why**: Command only runs on new commits, not on startup
 - **Effort**: Low
 - **Value**: Low
@@ -101,13 +92,13 @@ This document tracks potential improvements for ngenteni, prioritized by value a
   {"run_on_start": true}
   ```
 
-### 12. Webhook mode
+### 11. Webhook mode
 - **Why**: Polling wastes resources
 - **Effort**: High
 - **Value**: Low (polling is fine for most cases)
 - **Note**: Would require running an HTTP server
 
-### 13. Better auth for private repos
+### 12. Better auth for private repos
 - **Why**: SSH keys work but could add token support
 - **Effort**: Medium
 - **Value**: Low (SSH works well)
@@ -121,13 +112,13 @@ This document tracks potential improvements for ngenteni, prioritized by value a
 ~~2. **`--version` flag** - Takes 5 minutes, very useful~~
 ~~3. **Command timeout** - Prevents hung watchers~~
 
-✅ **All top 3 recommendations have been completed!**
+✅ **All high-priority recommendations completed!**
 
 New recommendations for next priorities:
 
-1. **Config validation** (Item 3) - Fail fast on invalid configs
-2. **`--dry-run` mode** (Item 4) - Test configs without executing
-3. **Structured logging** (Item 5) - Better debugging and production logs
+1. **`--dry-run` mode** (Item 3) - Test configs without executing commands
+2. **Structured logging** (Item 4) - Better debugging and production logs
+3. **Pass commit metadata** (Item 5) - More context for commands
 
 ## Contributing
 
@@ -180,3 +171,13 @@ When implementing features from this list:
 - Automatic cleanup with t.TempDir()
 - Test helper functions with t.Helper()
 - Local git repositories for integration tests
+
+### ✅ 4. Config validation (Completed 2026-01-12)
+- Validates all configurations at startup before creating watchers (fail-fast)
+- Validates required fields: name, url, branch, interval, command, workdir
+- Validates interval format and ensures positive duration
+- Validates timeout format (if provided) and ensures positive duration
+- Clear error messages indicating which repo and which field has issues
+- Comprehensive test coverage for all validation scenarios
+- Test coverage improved from 47.8% to 58.7%
+- All validation functions: 100% coverage
