@@ -244,3 +244,5 @@ This project uses [GoReleaser](https://goreleaser.com/) for releases. For detail
 ## License
 
 MIT
+
+# Test GH action
