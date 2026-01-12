@@ -152,7 +152,7 @@ func validateRepoConfig(repo *RepoConfig, index int) error {
 	}
 
 	// Validate required fields
-	if repo.Name == "" {
+	if repo.Name == "required" {
 		return fmt.Errorf("%s: name is required", errPrefix())
 	}
 	if repo.URL == "" {
