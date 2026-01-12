@@ -897,3 +897,276 @@ func TestUpdateWorkingDir(t *testing.T) {
 		t.Errorf("expected file to be 'version 2' after updateWorkingDir, got '%s'", content)
 	}
 }
+
+// Test dry-run mode
+func TestDryRun_ValidConfig(t *testing.T) {
+	// Create a test git repository to use for validation
+	dir := t.TempDir()
+	testRepoDir := filepath.Join(dir, "test-repo")
+	if err := os.MkdirAll(testRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		cmd = exec.Command("git", "init")
+		cmd.Dir = testRepoDir
+		if err := cmd.Run(); err != nil {
+			t.Skipf("git not available: %v", err)
+		}
+	}
+
+	// Configure git
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+
+	// Create initial file and commit
+	testFile := filepath.Join(testRepoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "test.txt")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git commit failed: %v", err)
+	}
+
+	// Get the current branch name
+	cmd = exec.Command("git", "branch", "--show-current")
+	cmd.Dir = testRepoDir
+	output, err := cmd.Output()
+	branch := "main"
+	if err == nil {
+		branch = strings.TrimSpace(string(output))
+	}
+
+	// Create config with local repo
+	config := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "test-repo",
+				URL:      testRepoDir,
+				Branch:   branch,
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+
+	// Run dry-run
+	err = dryRun(config)
+	if err != nil {
+		t.Errorf("dryRun failed with valid config: %v", err)
+	}
+}
+
+func TestDryRun_InvalidRepo(t *testing.T) {
+	config := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "invalid-repo",
+				URL:      "https://github.com/nonexistent/invalid-repo-12345.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "/tmp/test",
+			},
+		},
+	}
+
+	// Run dry-run - should fail
+	err := dryRun(config)
+	if err == nil {
+		t.Error("expected error for inaccessible repository, got nil")
+	}
+}
+
+func TestDryRun_InvalidBranch(t *testing.T) {
+	// Create a test git repository
+	dir := t.TempDir()
+	testRepoDir := filepath.Join(dir, "test-repo")
+	if err := os.MkdirAll(testRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		cmd = exec.Command("git", "init")
+		cmd.Dir = testRepoDir
+		if err := cmd.Run(); err != nil {
+			t.Skipf("git not available: %v", err)
+		}
+	}
+
+	// Configure git
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+
+	// Create initial file and commit
+	testFile := filepath.Join(testRepoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "test.txt")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git commit failed: %v", err)
+	}
+
+	// Create config with nonexistent branch
+	config := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "test-repo",
+				URL:      testRepoDir,
+				Branch:   "nonexistent-branch",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+
+	// Run dry-run - should fail
+	err := dryRun(config)
+	if err == nil {
+		t.Error("expected error for nonexistent branch, got nil")
+	}
+	if !strings.Contains(err.Error(), "branch") {
+		t.Errorf("expected error about branch, got: %v", err)
+	}
+}
+
+func TestTestRepoAccess_ValidRepo(t *testing.T) {
+	// Create a test git repository
+	dir := t.TempDir()
+	testRepoDir := filepath.Join(dir, "test-repo")
+	if err := os.MkdirAll(testRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		cmd = exec.Command("git", "init")
+		cmd.Dir = testRepoDir
+		if err := cmd.Run(); err != nil {
+			t.Skipf("git not available: %v", err)
+		}
+	}
+
+	// Configure git
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+
+	// Create initial file and commit
+	testFile := filepath.Join(testRepoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "test.txt")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git commit failed: %v", err)
+	}
+
+	// Get the current branch name
+	cmd = exec.Command("git", "branch", "--show-current")
+	cmd.Dir = testRepoDir
+	output, err := cmd.Output()
+	branch := "main"
+	if err == nil {
+		branch = strings.TrimSpace(string(output))
+	}
+
+	// Test repository access
+	err = testRepoAccess(testRepoDir, branch)
+	if err != nil {
+		t.Errorf("testRepoAccess failed for valid repo: %v", err)
+	}
+}
+
+func TestTestRepoAccess_InvalidRepo(t *testing.T) {
+	err := testRepoAccess("https://github.com/nonexistent/invalid-repo-12345.git", "main")
+	if err == nil {
+		t.Error("expected error for invalid repository, got nil")
+	}
+}
+
+func TestTestRepoAccess_InvalidBranch(t *testing.T) {
+	// Create a test git repository
+	dir := t.TempDir()
+	testRepoDir := filepath.Join(dir, "test-repo")
+	if err := os.MkdirAll(testRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		cmd = exec.Command("git", "init")
+		cmd.Dir = testRepoDir
+		if err := cmd.Run(); err != nil {
+			t.Skipf("git not available: %v", err)
+		}
+	}
+
+	// Configure git
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+
+	// Create initial file and commit
+	testFile := filepath.Join(testRepoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "test.txt")
+	cmd.Dir = testRepoDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git commit failed: %v", err)
+	}
+
+	// Test with nonexistent branch
+	err := testRepoAccess(testRepoDir, "nonexistent-branch")
+	if err == nil {
+		t.Error("expected error for nonexistent branch, got nil")
+	}
+	if !strings.Contains(err.Error(), "branch") {
+		t.Errorf("expected error about branch, got: %v", err)
+	}
+}
