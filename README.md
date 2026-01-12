@@ -239,7 +239,7 @@ go build -o ngenteni main.go
 
 ### Creating a Release
 
-This project uses [GoReleaser](https://goreleaser.com/) for releases. For detailed release instructions, see [RELEASING.md](RELEASING.md).
+This project uses [GoReleaser](https://goreleaser.com/) for releases. For detailed release instructions, see [docs/releasing.md](docs/releasing.md).
 
 ## License
 
