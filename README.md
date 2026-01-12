@@ -1,5 +1,7 @@
 # Ngenteni - Git Repository Watcher
 
+[![Tests](https://github.com/gedex/ngenteni/actions/workflows/test.yml/badge.svg)](https://github.com/gedex/ngenteni/actions/workflows/test.yml)
+
 A simple Git repository watcher that monitors remote repositories for new commits and executes commands when changes are detected.
 
 **Ngenteni** (Javanese: "waiting") - A lightweight tool that watches your Git repositories.
