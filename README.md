@@ -14,6 +14,7 @@ A simple Git repository watcher that monitors remote repositories for new commit
 - Pass repository information via environment variables
 - Automatic repository cloning and fetching
 - Dry-run mode to validate configuration before production use
+- **Hot reload**: Automatically reload configuration when config file changes (no restart needed)
 
 ## Installation
 
@@ -93,6 +94,27 @@ Create a `config.json` file with your repositories:
 
 # Stop gracefully
 # Press Ctrl+C - watchers will stop cleanly after completing current operations
+```
+
+### Hot Reload
+
+Ngenteni automatically watches the configuration file for changes and reloads without requiring a restart:
+
+- **Add repositories**: New repositories in the config will start being monitored automatically
+- **Remove repositories**: Removed repositories will have their watchers stopped gracefully
+- **Update repositories**: Modified repository configurations (URL, branch, interval, command, etc.) will restart the watcher with new settings
+- **No downtime**: Existing watchers continue running while the configuration is being reloaded
+- **Validation**: New configuration is validated before being applied; invalid configurations are rejected with error logs
+
+The file watcher includes debouncing (500ms) to handle rapid successive writes and properly handles file removal/recreation patterns used by many text editors.
+
+Example log output when config changes:
+```
+2026/02/08 11:07:20 Config file changed, reloading...
+2026/02/08 11:07:20 Config reloaded with 2 repos
+2026/02/08 11:07:20 [repo2] New repository detected, starting watcher
+2026/02/08 11:07:20 [repo1] Configuration unchanged, keeping watcher
+2026/02/08 11:07:20 Config reloaded successfully
 ```
 
 ### Dry-Run Mode
