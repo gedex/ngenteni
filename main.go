@@ -24,13 +24,14 @@ var (
 )
 
 type RepoConfig struct {
-	Name     string `json:"name"`
-	URL      string `json:"url"`
-	Branch   string `json:"branch"`
-	Interval string `json:"interval"`
-	Command  string `json:"command"`
-	WorkDir  string `json:"workdir"`
-	Timeout  string `json:"timeout,omitempty"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	Branch     string `json:"branch"`
+	Interval   string `json:"interval"`
+	Command    string `json:"command"`
+	WorkDir    string `json:"workdir"`
+	Timeout    string `json:"timeout,omitempty"`
+	RunOnStart bool   `json:"run_on_start,omitempty"`
 }
 
 type Config struct {
@@ -332,6 +333,20 @@ func (w *RepoWatcher) setup() error {
 	}
 	w.lastCommit = commit
 	log.Printf("[%s] Initial commit: %s", w.config.Name, commit[:8])
+
+	// Run command on start if configured
+	if w.config.RunOnStart {
+		log.Printf("[%s] Running initial command", w.config.Name)
+		if err := w.runCommand(commit); err != nil {
+			if strings.Contains(err.Error(), "timed out") {
+				log.Printf("[%s] Initial command timeout: %v", w.config.Name, err)
+			} else {
+				log.Printf("[%s] Initial command failed: %v", w.config.Name, err)
+			}
+		} else {
+			log.Printf("[%s] Initial command executed successfully", w.config.Name)
+		}
+	}
 
 	return nil
 }

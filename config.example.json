@@ -15,7 +15,8 @@
       "interval": "1m",
       "command": "/path/to/deploy.sh",
       "workdir": "./repos",
-      "timeout": "5m"
+      "timeout": "5m",
+      "run_on_start": true
     }
   ]
 }
