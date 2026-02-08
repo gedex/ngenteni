@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 var (
@@ -21,6 +23,12 @@ var (
 	commit  = "none"
 	date    = "unknown"
 	builtBy = "unknown"
+)
+
+const (
+	// Config file watching constants
+	configReloadDebounce     = 500 * time.Millisecond
+	configFileRecreateDelay  = 100 * time.Millisecond
 )
 
 type RepoConfig struct {
@@ -43,6 +51,226 @@ type RepoWatcher struct {
 	lastCommit     string
 	interval       time.Duration
 	commandTimeout time.Duration
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+}
+
+type WatcherManager struct {
+	watchers   map[string]*RepoWatcher
+	mu         sync.RWMutex
+	configPath string
+}
+
+func NewWatcherManager(configPath string) *WatcherManager {
+	return &WatcherManager{
+		watchers:   make(map[string]*RepoWatcher),
+		configPath: configPath,
+	}
+}
+
+// StartWatchers initializes and starts watchers for all repositories in the config
+func (wm *WatcherManager) StartWatchers(ctx context.Context, wg *sync.WaitGroup, config *Config) error {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	for _, repo := range config.Repos {
+		if _, exists := wm.watchers[repo.Name]; exists {
+			continue // Skip if already running
+		}
+
+		watcher, err := NewRepoWatcher(repo)
+		if err != nil {
+			log.Printf("[%s] Failed to initialize: %v", repo.Name, err)
+			continue
+		}
+
+		// Create a context for this watcher
+		watcherCtx, cancel := context.WithCancel(ctx)
+		watcher.cancel = cancel
+
+		wm.watchers[repo.Name] = watcher
+
+		wg.Add(1)
+		go func(w *RepoWatcher) {
+			defer wg.Done()
+			w.Watch(watcherCtx)
+		}(watcher)
+	}
+
+	return nil
+}
+
+// StopWatcher stops a specific watcher by name
+func (wm *WatcherManager) StopWatcher(name string) {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	if watcher, exists := wm.watchers[name]; exists {
+		if watcher.cancel != nil {
+			watcher.cancel()
+		}
+		delete(wm.watchers, name)
+		log.Printf("[%s] Watcher stopped", name)
+	}
+}
+
+// ReloadConfig reloads the configuration and updates watchers
+func (wm *WatcherManager) ReloadConfig(ctx context.Context, wg *sync.WaitGroup) error {
+	// Load new config
+	newConfig, err := loadConfig(wm.configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	log.Printf("Config reloaded with %d repos", len(newConfig.Repos))
+
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	// Build map of new repos
+	newRepos := make(map[string]RepoConfig)
+	for _, repo := range newConfig.Repos {
+		newRepos[repo.Name] = repo
+	}
+
+	// Stop watchers for removed repos
+	for name, watcher := range wm.watchers {
+		if _, exists := newRepos[name]; !exists {
+			log.Printf("[%s] Repository removed from config, stopping watcher", name)
+			if watcher.cancel != nil {
+				watcher.cancel()
+			}
+			delete(wm.watchers, name)
+		}
+	}
+
+	// Update or start watchers
+	for name, newRepo := range newRepos {
+		if watcher, exists := wm.watchers[name]; exists {
+			// Check if config changed
+			if configChanged(watcher.config, newRepo) {
+				log.Printf("[%s] Configuration changed, restarting watcher", name)
+				// Stop old watcher
+				if watcher.cancel != nil {
+					watcher.cancel()
+				}
+				delete(wm.watchers, name)
+
+				// Start new watcher
+				newWatcher, err := NewRepoWatcher(newRepo)
+				if err != nil {
+					log.Printf("[%s] Failed to initialize after config change: %v", name, err)
+					continue
+				}
+
+				watcherCtx, cancel := context.WithCancel(ctx)
+				newWatcher.cancel = cancel
+				wm.watchers[name] = newWatcher
+
+				wg.Add(1)
+				go func(w *RepoWatcher) {
+					defer wg.Done()
+					w.Watch(watcherCtx)
+				}(newWatcher)
+			} else {
+				log.Printf("[%s] Configuration unchanged, keeping watcher", name)
+			}
+		} else {
+			// New repo, start watcher
+			log.Printf("[%s] New repository detected, starting watcher", name)
+			newWatcher, err := NewRepoWatcher(newRepo)
+			if err != nil {
+				log.Printf("[%s] Failed to initialize: %v", name, err)
+				continue
+			}
+
+			watcherCtx, cancel := context.WithCancel(ctx)
+			newWatcher.cancel = cancel
+			wm.watchers[name] = newWatcher
+
+			wg.Add(1)
+			go func(w *RepoWatcher) {
+				defer wg.Done()
+				w.Watch(watcherCtx)
+			}(newWatcher)
+		}
+	}
+
+	return nil
+}
+
+// WatchConfigFile watches the config file for changes and reloads
+func (wm *WatcherManager) WatchConfigFile(ctx context.Context, wg *sync.WaitGroup) error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("creating file watcher: %w", err)
+	}
+	defer watcher.Close()
+
+	// Watch the config file
+	if err := watcher.Add(wm.configPath); err != nil {
+		return fmt.Errorf("watching config file: %w", err)
+	}
+
+	log.Printf("Watching config file: %s", wm.configPath)
+
+	// Debounce timer to handle rapid successive writes
+	var debounceTimer *time.Timer
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+
+			// Handle file events (Write or Create)
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				// Reset or create debounce timer
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+
+				debounceTimer = time.AfterFunc(configReloadDebounce, func() {
+					log.Println("Config file changed, reloading...")
+					if err := wm.ReloadConfig(ctx, wg); err != nil {
+						log.Printf("Failed to reload config: %v", err)
+					} else {
+						log.Println("Config reloaded successfully")
+					}
+				})
+			}
+
+			// Handle file removal and recreation (common with some editors)
+			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				log.Println("Config file removed or renamed, re-watching...")
+				// Re-add the watch (some editors remove and recreate files)
+				time.Sleep(configFileRecreateDelay) // Small delay for file to be recreated
+				_ = watcher.Remove(wm.configPath)
+				if err := watcher.Add(wm.configPath); err != nil {
+					log.Printf("Failed to re-watch config file: %v", err)
+				}
+			}
+
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			log.Printf("Config file watcher error: %v", err)
+		}
+	}
+}
+
+// configChanged checks if two RepoConfig structs differ
+func configChanged(old, new RepoConfig) bool {
+	return old.URL != new.URL ||
+		old.Branch != new.Branch ||
+		old.Interval != new.Interval ||
+		old.Command != new.Command ||
+		old.WorkDir != new.WorkDir ||
+		old.Timeout != new.Timeout
 }
 
 func main() {
@@ -85,6 +313,12 @@ func main() {
 		return
 	}
 
+	// Get absolute path for config file
+	absConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		log.Fatalf("Failed to get absolute config path: %v", err)
+	}
+
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -93,22 +327,25 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Start watchers
+	// Create watcher manager
+	manager := NewWatcherManager(absConfigPath)
+
+	// Start initial watchers
 	var wg sync.WaitGroup
-	for _, repo := range config.Repos {
-		wg.Add(1)
-		go func(r RepoConfig) {
-			defer wg.Done()
-			watcher, err := NewRepoWatcher(r)
-			if err != nil {
-				log.Printf("[%s] Failed to initialize: %v", r.Name, err)
-				return
-			}
-			watcher.Watch(ctx)
-		}(repo)
+	if err := manager.StartWatchers(ctx, &wg, config); err != nil {
+		log.Fatalf("Failed to start watchers: %v", err)
 	}
 
-	log.Println("All watchers started. Press Ctrl+C to stop.")
+	// Start config file watcher
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := manager.WatchConfigFile(ctx, &wg); err != nil && err != context.Canceled {
+			log.Printf("Config file watcher error: %v", err)
+		}
+	}()
+
+	log.Println("All watchers started. Config file is being watched for changes. Press Ctrl+C to stop.")
 
 	// Wait for signal
 	<-sigChan
