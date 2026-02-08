@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -794,6 +795,78 @@ func TestLoadConfig_ValidationErrors(t *testing.T) {
 	}
 }
 
+// Test run_on_start configuration parsing
+func TestLoadConfig_RunOnStart(t *testing.T) {
+	tests := []struct {
+		name           string
+		configJSON     string
+		wantRunOnStart bool
+	}{
+		{
+			name: "run_on_start true",
+			configJSON: `{
+				"repos": [{
+					"name": "test",
+					"url": "https://github.com/test/repo.git",
+					"branch": "main",
+					"interval": "30s",
+					"command": "echo test",
+					"workdir": "./repos",
+					"run_on_start": true
+				}]
+			}`,
+			wantRunOnStart: true,
+		},
+		{
+			name: "run_on_start false",
+			configJSON: `{
+				"repos": [{
+					"name": "test",
+					"url": "https://github.com/test/repo.git",
+					"branch": "main",
+					"interval": "30s",
+					"command": "echo test",
+					"workdir": "./repos",
+					"run_on_start": false
+				}]
+			}`,
+			wantRunOnStart: false,
+		},
+		{
+			name: "run_on_start omitted (default false)",
+			configJSON: `{
+				"repos": [{
+					"name": "test",
+					"url": "https://github.com/test/repo.git",
+					"branch": "main",
+					"interval": "30s",
+					"command": "echo test",
+					"workdir": "./repos"
+				}]
+			}`,
+			wantRunOnStart: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := createTestConfig(t, tt.configJSON)
+			config, err := loadConfig(path)
+			if err != nil {
+				t.Fatalf("loadConfig() failed: %v", err)
+			}
+
+			if len(config.Repos) != 1 {
+				t.Fatalf("expected 1 repo, got %d", len(config.Repos))
+			}
+
+			if config.Repos[0].RunOnStart != tt.wantRunOnStart {
+				t.Errorf("RunOnStart = %v, want %v", config.Repos[0].RunOnStart, tt.wantRunOnStart)
+			}
+		})
+	}
+}
+
 // Test that working directory is updated when new commits are detected
 func TestUpdateWorkingDir(t *testing.T) {
 	dir := t.TempDir()
@@ -1061,5 +1134,122 @@ func TestTestRepoAccess_InvalidBranch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "branch") {
 		t.Errorf("expected error about branch, got: %v", err)
+	}
+}
+
+// Test that command runs on start when run_on_start is true
+func TestRunOnStart_CommandExecutes(t *testing.T) {
+	dir := t.TempDir()
+	testRepoDir, branch := createTestGitRepo(t, dir)
+
+	// Create a file that will be touched by the command to verify execution
+	markerFile := filepath.Join(dir, "command_executed.txt")
+
+	// Create config with run_on_start enabled
+	config := RepoConfig{
+		Name:       "test",
+		URL:        testRepoDir,
+		Branch:     branch,
+		Interval:   "30s",
+		Command:    fmt.Sprintf("echo 'executed' > %s", markerFile),
+		WorkDir:    filepath.Join(dir, "workdir"),
+		RunOnStart: true,
+	}
+
+	// Create the watcher - this should trigger the command execution
+	_, err := NewRepoWatcher(config)
+	if err != nil {
+		t.Fatalf("NewRepoWatcher failed: %v", err)
+	}
+
+	// Check that the marker file was created
+	if _, err := os.Stat(markerFile); os.IsNotExist(err) {
+		t.Error("command was not executed on start despite run_on_start being true")
+	} else {
+		content, err := os.ReadFile(markerFile)
+		if err != nil {
+			t.Fatalf("failed to read marker file: %v", err)
+		}
+		if !strings.Contains(string(content), "executed") {
+			t.Errorf("unexpected marker file content: %s", content)
+		}
+	}
+}
+
+// Test that command does NOT run on start when run_on_start is false
+func TestRunOnStart_CommandDoesNotExecute(t *testing.T) {
+	dir := t.TempDir()
+	testRepoDir, branch := createTestGitRepo(t, dir)
+
+	// Create a file that will be touched by the command to verify execution
+	markerFile := filepath.Join(dir, "command_executed.txt")
+
+	// Create config with run_on_start disabled (default)
+	config := RepoConfig{
+		Name:       "test",
+		URL:        testRepoDir,
+		Branch:     branch,
+		Interval:   "30s",
+		Command:    fmt.Sprintf("echo 'executed' > %s", markerFile),
+		WorkDir:    filepath.Join(dir, "workdir"),
+		RunOnStart: false,
+	}
+
+	// Create the watcher - this should NOT trigger the command execution
+	_, err := NewRepoWatcher(config)
+	if err != nil {
+		t.Fatalf("NewRepoWatcher failed: %v", err)
+	}
+
+	// Check that the marker file was NOT created
+	if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
+		t.Error("command was executed on start despite run_on_start being false")
+	}
+}
+
+// Test that environment variables are set correctly for initial run
+func TestRunOnStart_EnvironmentVariables(t *testing.T) {
+	dir := t.TempDir()
+	testRepoDir, branch := createTestGitRepo(t, dir)
+
+	// Create a script that checks OLD_COMMIT equals NEW_COMMIT
+	scriptPath := filepath.Join(dir, "check_commits.sh")
+	script := `#!/bin/sh
+if [ "$OLD_COMMIT" = "$NEW_COMMIT" ]; then
+    echo "commits_match" > ` + filepath.Join(dir, "result.txt") + `
+else
+    echo "commits_differ" > ` + filepath.Join(dir, "result.txt") + `
+fi
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create config with run_on_start enabled
+	config := RepoConfig{
+		Name:       "test",
+		URL:        testRepoDir,
+		Branch:     branch,
+		Interval:   "30s",
+		Command:    scriptPath,
+		WorkDir:    filepath.Join(dir, "workdir"),
+		RunOnStart: true,
+	}
+
+	// Create the watcher
+	_, err := NewRepoWatcher(config)
+	if err != nil {
+		t.Fatalf("NewRepoWatcher failed: %v", err)
+	}
+
+	// Check result file
+	resultFile := filepath.Join(dir, "result.txt")
+	content, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatalf("failed to read result file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "commits_match") {
+		t.Errorf("OLD_COMMIT and NEW_COMMIT should be equal on initial run, got: %s", content)
 	}
 }

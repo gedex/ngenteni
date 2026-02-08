@@ -74,6 +74,7 @@ Create a `config.json` file with your repositories:
 - **command**: Shell command to execute when new commits are detected (supports pipes, redirects, quotes, etc.)
 - **workdir**: Directory where repositories will be cloned
 - **timeout** (optional): Maximum duration for command execution (e.g., "5m", "30s"). If not specified, commands run without timeout. Commands exceeding the timeout are killed with SIGKILL.
+- **run_on_start** (optional): If `true`, executes the command immediately after repository setup, using the current commit for both `OLD_COMMIT` and `NEW_COMMIT` environment variables. Useful for initialization tasks or testing. Default is `false`.
 
 ## Usage
 
