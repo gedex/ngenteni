@@ -25,6 +25,12 @@ var (
 	builtBy = "unknown"
 )
 
+const (
+	// Config file watching constants
+	configReloadDebounce     = 500 * time.Millisecond
+	configFileRecreateDelay  = 100 * time.Millisecond
+)
+
 type RepoConfig struct {
 	Name     string `json:"name"`
 	URL      string `json:"url"`
@@ -210,7 +216,6 @@ func (wm *WatcherManager) WatchConfigFile(ctx context.Context, wg *sync.WaitGrou
 
 	// Debounce timer to handle rapid successive writes
 	var debounceTimer *time.Timer
-	debounceDuration := 500 * time.Millisecond
 
 	for {
 		select {
@@ -228,7 +233,7 @@ func (wm *WatcherManager) WatchConfigFile(ctx context.Context, wg *sync.WaitGrou
 					debounceTimer.Stop()
 				}
 
-				debounceTimer = time.AfterFunc(debounceDuration, func() {
+				debounceTimer = time.AfterFunc(configReloadDebounce, func() {
 					log.Println("Config file changed, reloading...")
 					if err := wm.ReloadConfig(ctx, wg); err != nil {
 						log.Printf("Failed to reload config: %v", err)
@@ -242,7 +247,7 @@ func (wm *WatcherManager) WatchConfigFile(ctx context.Context, wg *sync.WaitGrou
 			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 				log.Println("Config file removed or renamed, re-watching...")
 				// Re-add the watch (some editors remove and recreate files)
-				time.Sleep(100 * time.Millisecond) // Small delay for file to be recreated
+				time.Sleep(configFileRecreateDelay) // Small delay for file to be recreated
 				_ = watcher.Remove(wm.configPath)
 				if err := watcher.Add(wm.configPath); err != nil {
 					log.Printf("Failed to re-watch config file: %v", err)
