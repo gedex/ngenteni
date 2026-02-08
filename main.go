@@ -49,6 +49,7 @@ func main() {
 	// Define flags
 	versionFlag := flag.Bool("version", false, "Print version information")
 	versionShort := flag.Bool("v", false, "Print version information (short)")
+	dryRunFlag := flag.Bool("dry-run", false, "Validate configuration and test repository access without running watchers")
 
 	flag.Parse()
 
@@ -73,6 +74,16 @@ func main() {
 	}
 
 	log.Printf("Loaded config with %d repos", len(config.Repos))
+
+	// Handle dry-run mode
+	if *dryRunFlag {
+		log.Println("Running in dry-run mode - no commands will be executed")
+		if err := dryRun(config); err != nil {
+			log.Fatalf("Dry-run validation failed: %v", err)
+		}
+		log.Println("Dry-run completed successfully!")
+		return
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -191,6 +202,71 @@ func validateRepoConfig(repo *RepoConfig, index int) error {
 		}
 	}
 
+	return nil
+}
+
+// dryRun validates configuration and tests repository accessibility without executing commands
+func dryRun(config *Config) error {
+	log.Println("Validating configuration...")
+	
+	// Configuration is already validated by loadConfig, but let's report it
+	log.Printf("✓ Configuration is valid (%d repositories configured)", len(config.Repos))
+	
+	// Test each repository
+	for i, repo := range config.Repos {
+		log.Printf("\n[%d/%d] Checking repository: %s", i+1, len(config.Repos), repo.Name)
+		
+		// Validate repository URL accessibility
+		log.Printf("  Testing repository accessibility: %s", repo.URL)
+		if err := testRepoAccess(repo.URL, repo.Branch); err != nil {
+			log.Printf("  ✗ Repository access failed: %v", err)
+			return fmt.Errorf("repo '%s': %w", repo.Name, err)
+		}
+		log.Printf("  ✓ Repository is accessible")
+		
+		// Parse and display interval
+		interval, _ := time.ParseDuration(repo.Interval)
+		log.Printf("  ✓ Polling interval: %s", interval)
+		
+		// Parse and display timeout if set
+		if repo.Timeout != "" {
+			timeout, _ := time.ParseDuration(repo.Timeout)
+			log.Printf("  ✓ Command timeout: %s", timeout)
+		} else {
+			log.Printf("  ℹ Command timeout: none (unlimited)")
+		}
+		
+		// Display work directory
+		log.Printf("  ✓ Work directory: %s", repo.WorkDir)
+		
+		// Display command (but don't execute it)
+		log.Printf("  ✓ Command configured: %s", repo.Command)
+		log.Printf("  ℹ Command would execute when new commits are detected")
+	}
+	
+	log.Println("\n✓ All repositories validated successfully")
+	log.Println("✓ Configuration is ready for production use")
+	
+	return nil
+}
+
+// testRepoAccess checks if a repository URL is accessible and the branch exists
+func testRepoAccess(url, branch string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	// Use git ls-remote to check repository and branch accessibility
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", url, fmt.Sprintf("refs/heads/%s", branch))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cannot access repository: %w (output: %s)", err, string(output))
+	}
+	
+	// Check if branch was found in the output
+	if len(output) == 0 {
+		return fmt.Errorf("branch '%s' not found in repository", branch)
+	}
+	
 	return nil
 }
 

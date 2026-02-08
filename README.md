@@ -13,6 +13,7 @@ A simple Git repository watcher that monitors remote repositories for new commit
 - Execute custom commands when new commits are detected
 - Pass repository information via environment variables
 - Automatic repository cloning and fetching
+- Dry-run mode to validate configuration before production use
 
 ## Installation
 
@@ -81,6 +82,9 @@ Create a `config.json` file with your repositories:
 ./ngenteni --version
 ./ngenteni -v
 
+# Validate configuration (dry-run mode)
+./ngenteni --dry-run config.json
+
 # Use default config.json
 ./ngenteni
 
@@ -89,6 +93,42 @@ Create a `config.json` file with your repositories:
 
 # Stop gracefully
 # Press Ctrl+C - watchers will stop cleanly after completing current operations
+```
+
+### Dry-Run Mode
+
+Before running in production, you can validate your configuration using the `--dry-run` flag:
+
+```bash
+./ngenteni --dry-run config.json
+```
+
+This mode will:
+- Load and validate your configuration file
+- Test repository accessibility using `git ls-remote`
+- Verify that branches exist
+- Display what would happen without actually cloning repositories or executing commands
+- Report any configuration errors or access issues
+
+Example output:
+```
+2026/01/12 02:28:34 Loaded config with 1 repos
+2026/01/12 02:28:34 Running in dry-run mode - no commands will be executed
+2026/01/12 02:28:34 Validating configuration...
+2026/01/12 02:28:34 ✓ Configuration is valid (1 repositories configured)
+
+[1/1] Checking repository: ngenteni
+2026/01/12 02:28:34   Testing repository accessibility: https://github.com/gedex/ngenteni.git
+2026/01/12 02:28:34   ✓ Repository is accessible
+2026/01/12 02:28:34   ✓ Polling interval: 30s
+2026/01/12 02:28:34   ✓ Command timeout: 5m0s
+2026/01/12 02:28:34   ✓ Work directory: /tmp/test-repos
+2026/01/12 02:28:34   ✓ Command configured: echo 'New commit detected'
+2026/01/12 02:28:34   ℹ Command would execute when new commits are detected
+
+✓ All repositories validated successfully
+2026/01/12 02:28:34 ✓ Configuration is ready for production use
+2026/01/12 02:28:34 Dry-run completed successfully!
 ```
 
 ## Environment Variables
