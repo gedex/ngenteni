@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1063,3 +1065,459 @@ func TestTestRepoAccess_InvalidBranch(t *testing.T) {
 		t.Errorf("expected error about branch, got: %v", err)
 	}
 }
+
+// Test config reload functionality
+func TestWatcherManager_StartWatchers(t *testing.T) {
+	dir := t.TempDir()
+	testRepoDir, branch := createTestGitRepo(t, dir)
+
+	config := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "test-repo",
+				URL:      testRepoDir,
+				Branch:   branch,
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+
+	manager := NewWatcherManager("/tmp/test-config.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	err := manager.StartWatchers(ctx, &wg, config)
+	if err != nil {
+		t.Fatalf("StartWatchers failed: %v", err)
+	}
+
+	// Verify watcher was started
+	manager.mu.RLock()
+	if len(manager.watchers) != 1 {
+		t.Errorf("expected 1 watcher, got %d", len(manager.watchers))
+	}
+	if _, exists := manager.watchers["test-repo"]; !exists {
+		t.Error("expected watcher 'test-repo' to exist")
+	}
+	manager.mu.RUnlock()
+
+	// Stop watchers
+	cancel()
+	wg.Wait()
+}
+
+func TestWatcherManager_StopWatcher(t *testing.T) {
+	manager := NewWatcherManager("/tmp/test-config.json")
+	
+	// Create a fake watcher
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	watcher := &RepoWatcher{
+		config: RepoConfig{Name: "test"},
+		cancel: cancel,
+	}
+	
+	manager.mu.Lock()
+	manager.watchers["test"] = watcher
+	manager.mu.Unlock()
+
+	// Stop the watcher
+	manager.StopWatcher("test")
+
+	// Verify it was removed
+	manager.mu.RLock()
+	if len(manager.watchers) != 0 {
+		t.Errorf("expected 0 watchers, got %d", len(manager.watchers))
+	}
+	manager.mu.RUnlock()
+}
+
+func TestWatcherManager_ReloadConfig_AddRepo(t *testing.T) {
+	dir := t.TempDir()
+	testRepoDir1, branch1 := createTestGitRepo(t, filepath.Join(dir, "repo1"))
+	testRepoDir2, branch2 := createTestGitRepo(t, filepath.Join(dir, "repo2"))
+
+	// Create initial config with one repo
+	configPath := filepath.Join(dir, "config.json")
+	config1 := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "repo1",
+				URL:      testRepoDir1,
+				Branch:   branch1,
+				Interval: "30s",
+				Command:  "echo test1",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+	
+	data, _ := json.Marshal(config1)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewWatcherManager(configPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	
+	// Start initial watchers
+	if err := manager.StartWatchers(ctx, &wg, config1); err != nil {
+		t.Fatalf("StartWatchers failed: %v", err)
+	}
+
+	// Verify initial state
+	manager.mu.RLock()
+	if len(manager.watchers) != 1 {
+		t.Errorf("expected 1 watcher initially, got %d", len(manager.watchers))
+	}
+	manager.mu.RUnlock()
+
+	// Update config to add a second repo
+	config2 := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "repo1",
+				URL:      testRepoDir1,
+				Branch:   branch1,
+				Interval: "30s",
+				Command:  "echo test1",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+			{
+				Name:     "repo2",
+				URL:      testRepoDir2,
+				Branch:   branch2,
+				Interval: "1m",
+				Command:  "echo test2",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+	
+	data, _ = json.Marshal(config2)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload config
+	if err := manager.ReloadConfig(ctx, &wg); err != nil {
+		t.Fatalf("ReloadConfig failed: %v", err)
+	}
+
+	// Verify both watchers exist
+	manager.mu.RLock()
+	if len(manager.watchers) != 2 {
+		t.Errorf("expected 2 watchers after reload, got %d", len(manager.watchers))
+	}
+	if _, exists := manager.watchers["repo1"]; !exists {
+		t.Error("expected watcher 'repo1' to exist")
+	}
+	if _, exists := manager.watchers["repo2"]; !exists {
+		t.Error("expected watcher 'repo2' to exist")
+	}
+	manager.mu.RUnlock()
+
+	// Cleanup
+	cancel()
+	wg.Wait()
+}
+
+func TestWatcherManager_ReloadConfig_RemoveRepo(t *testing.T) {
+	dir := t.TempDir()
+	testRepoDir1, branch1 := createTestGitRepo(t, filepath.Join(dir, "repo1"))
+	testRepoDir2, branch2 := createTestGitRepo(t, filepath.Join(dir, "repo2"))
+
+	// Create initial config with two repos
+	configPath := filepath.Join(dir, "config.json")
+	config1 := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "repo1",
+				URL:      testRepoDir1,
+				Branch:   branch1,
+				Interval: "30s",
+				Command:  "echo test1",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+			{
+				Name:     "repo2",
+				URL:      testRepoDir2,
+				Branch:   branch2,
+				Interval: "1m",
+				Command:  "echo test2",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+	
+	data, _ := json.Marshal(config1)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewWatcherManager(configPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	
+	// Start initial watchers
+	if err := manager.StartWatchers(ctx, &wg, config1); err != nil {
+		t.Fatalf("StartWatchers failed: %v", err)
+	}
+
+	// Verify initial state
+	manager.mu.RLock()
+	if len(manager.watchers) != 2 {
+		t.Errorf("expected 2 watchers initially, got %d", len(manager.watchers))
+	}
+	manager.mu.RUnlock()
+
+	// Update config to remove repo2
+	config2 := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "repo1",
+				URL:      testRepoDir1,
+				Branch:   branch1,
+				Interval: "30s",
+				Command:  "echo test1",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+	
+	data, _ = json.Marshal(config2)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload config
+	if err := manager.ReloadConfig(ctx, &wg); err != nil {
+		t.Fatalf("ReloadConfig failed: %v", err)
+	}
+
+	// Verify only repo1 watcher exists
+	manager.mu.RLock()
+	if len(manager.watchers) != 1 {
+		t.Errorf("expected 1 watcher after reload, got %d", len(manager.watchers))
+	}
+	if _, exists := manager.watchers["repo1"]; !exists {
+		t.Error("expected watcher 'repo1' to exist")
+	}
+	if _, exists := manager.watchers["repo2"]; exists {
+		t.Error("expected watcher 'repo2' to be removed")
+	}
+	manager.mu.RUnlock()
+
+	// Cleanup
+	cancel()
+	wg.Wait()
+}
+
+func TestWatcherManager_ReloadConfig_UpdateRepo(t *testing.T) {
+	dir := t.TempDir()
+	testRepoDir, branch := createTestGitRepo(t, dir)
+
+	// Create initial config
+	configPath := filepath.Join(dir, "config.json")
+	config1 := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "test-repo",
+				URL:      testRepoDir,
+				Branch:   branch,
+				Interval: "30s",
+				Command:  "echo test1",
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+	
+	data, _ := json.Marshal(config1)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewWatcherManager(configPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	
+	// Start initial watchers
+	if err := manager.StartWatchers(ctx, &wg, config1); err != nil {
+		t.Fatalf("StartWatchers failed: %v", err)
+	}
+
+	// Get initial watcher reference
+	manager.mu.RLock()
+	initialWatcher := manager.watchers["test-repo"]
+	initialCommand := initialWatcher.config.Command
+	manager.mu.RUnlock()
+
+	if initialCommand != "echo test1" {
+		t.Errorf("expected initial command 'echo test1', got '%s'", initialCommand)
+	}
+
+	// Update config with different command
+	config2 := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:     "test-repo",
+				URL:      testRepoDir,
+				Branch:   branch,
+				Interval: "30s",
+				Command:  "echo test2",  // Changed command
+				WorkDir:  filepath.Join(dir, "workdir"),
+			},
+		},
+	}
+	
+	data, _ = json.Marshal(config2)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload config
+	if err := manager.ReloadConfig(ctx, &wg); err != nil {
+		t.Fatalf("ReloadConfig failed: %v", err)
+	}
+
+	// Verify watcher was restarted with new config
+	manager.mu.RLock()
+	updatedWatcher := manager.watchers["test-repo"]
+	updatedCommand := updatedWatcher.config.Command
+	manager.mu.RUnlock()
+
+	if updatedCommand != "echo test2" {
+		t.Errorf("expected updated command 'echo test2', got '%s'", updatedCommand)
+	}
+
+	// Cleanup
+	cancel()
+	wg.Wait()
+}
+
+func TestConfigChanged(t *testing.T) {
+	tests := []struct {
+		name     string
+		old      RepoConfig
+		new      RepoConfig
+		expected bool
+	}{
+		{
+			name: "no change",
+			old: RepoConfig{
+				Name:     "test",
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+				Timeout:  "5m",
+			},
+			new: RepoConfig{
+				Name:     "test",
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+				Timeout:  "5m",
+			},
+			expected: false,
+		},
+		{
+			name: "URL changed",
+			old: RepoConfig{
+				URL:      "https://github.com/test/repo1.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+			},
+			new: RepoConfig{
+				URL:      "https://github.com/test/repo2.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+			},
+			expected: true,
+		},
+		{
+			name: "Branch changed",
+			old: RepoConfig{
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+			},
+			new: RepoConfig{
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "develop",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+			},
+			expected: true,
+		},
+		{
+			name: "Command changed",
+			old: RepoConfig{
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test1",
+				WorkDir:  "./repos",
+			},
+			new: RepoConfig{
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test2",
+				WorkDir:  "./repos",
+			},
+			expected: true,
+		},
+		{
+			name: "Timeout changed",
+			old: RepoConfig{
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+				Timeout:  "5m",
+			},
+			new: RepoConfig{
+				URL:      "https://github.com/test/repo.git",
+				Branch:   "main",
+				Interval: "30s",
+				Command:  "echo test",
+				WorkDir:  "./repos",
+				Timeout:  "10m",
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := configChanged(tt.old, tt.new)
+			if result != tt.expected {
+				t.Errorf("configChanged() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
